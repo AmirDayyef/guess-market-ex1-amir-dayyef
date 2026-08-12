@@ -4,8 +4,8 @@ A Java 25 console implementation of a binary LMSR prediction market.
 
 ## Participants
 
-- Amir Dayyef — ID `323092023` — [Amirdayyef@gmail.com](mailto:Amirdayyef@gmail.com)
-- NOUR GUTY — ID `322235516` — [nourguty581@gmail.com](mailto:nourguty581@gmail.com)
+- Amir Dayyef — ID `323092023` — [amirdayyef@gmail.com](mailto:amirdayyef@gmail.com)
+- Nour Guty — ID `322235516` — [nourguty581@gmail.com](mailto:nourguty581@gmail.com)
 
 ## Project structure
 
