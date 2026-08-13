@@ -45,7 +45,7 @@ public final class MarketEvent implements Serializable {
         // The subsidy C(0,0) is the MM's maximum exposure, not spendable
         // income. The displayed account therefore starts at zero and tracks
         // the MM's actual profit/loss as trades and settlement occur.
-        this.accountBalance = 0.0;
+        this.accountBalance = Lmsr.cost(0L, 0L, this.liquidity);
     }
 
     public Trade buyShares(int optionNumber, long quantity) {
