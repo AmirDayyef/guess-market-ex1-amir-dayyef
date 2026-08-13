@@ -33,7 +33,7 @@ class GuessMarketEngineImplTest {
         assertEquals(2, engine.getEvents().size());
         EventDetails first = engine.getEventDetails(1);
         assertEquals(EventStatus.ACTIVE, first.summary().status());
-        assertEquals(0.0, first.accountBalance(), TOLERANCE);
+        assertEquals(initialSubsidy(100), first.accountBalance(), TOLERANCE);
         assertEquals(0.5, first.options().get(0).currentPrice(), TOLERANCE);
         assertEquals(0.5, first.options().get(1).currentPrice(), TOLERANCE);
     }
@@ -51,7 +51,7 @@ class GuessMarketEngineImplTest {
         assertEquals(65.1120232306191, first.totalPaid(), TOLERANCE);
         assertEquals(868.686171467148, second.sharesCost(), TOLERANCE);
         assertEquals(43.4343085733574, second.commission(), TOLERANCE);
-        assertEquals(977.232503271124, details.accountBalance(), TOLERANCE);
+        assertEquals(initialSubsidy(100) + 977.232503271124, details.accountBalance(), TOLERANCE);
         assertEquals(46.5348811081489, details.totalCommissionCollected(), TOLERANCE);
         assertEquals(0.000123394575986, details.options().get(0).currentPrice(), TOLERANCE);
         assertEquals(0.999876605424014, details.options().get(1).currentPrice(), TOLERANCE);
@@ -61,7 +61,7 @@ class GuessMarketEngineImplTest {
     }
 
     @Test
-    void closesOnPurchaseEventAndKeepsNegativeFinalBalance() throws Exception {
+    void closesOnPurchaseEventAndKeepsRemainingSubsidyBalance() throws Exception {
         GuessMarketEngineImpl engine = engineWithSingleEvent(5, "on-purchase", 100);
         engine.buyShares(1, 1, 100);
         engine.buyShares(1, 2, 1_000);
@@ -71,7 +71,7 @@ class GuessMarketEngineImplTest {
         assertEquals(EventStatus.CLOSED, closed.summary().status());
         assertEquals("No", closed.settlement().winningOptionName());
         assertEquals(1_000, closed.settlement().winningShares());
-        assertEquals(-22.767496728876, closed.accountBalance(), TOLERANCE);
+        assertEquals(initialSubsidy(100) - 22.767496728876, closed.accountBalance(), TOLERANCE);
         assertEquals(closed.accountBalance(), closed.settlement().finalAccountBalance(), TOLERANCE);
         assertThrows(InvalidOperationException.class, () -> engine.buyShares(1, 1, 1));
         assertThrows(InvalidOperationException.class, () -> engine.closeEvent(1, 1));
@@ -83,12 +83,13 @@ class GuessMarketEngineImplTest {
         TradeReceipt receipt = engine.buyShares(1, 1, 100);
 
         assertEquals(0.0, receipt.commission(), TOLERANCE);
-        assertEquals(71.6890415241514, receipt.updatedEvent().accountBalance(), TOLERANCE);
+        assertEquals(initialSubsidy(50) + 71.6890415241514,
+                receipt.updatedEvent().accountBalance(), TOLERANCE);
 
         EventDetails closed = engine.closeEvent(1, 1);
         assertEquals(15.0, closed.settlement().commission(), TOLERANCE);
         assertEquals(85.0, closed.settlement().payoutAfterCommission(), TOLERANCE);
-        assertEquals(-13.3109584758486, closed.accountBalance(), TOLERANCE);
+        assertEquals(initialSubsidy(50) - 13.3109584758486, closed.accountBalance(), TOLERANCE);
         assertEquals(15.0, closed.totalCommissionCollected(), TOLERANCE);
     }
 
@@ -167,6 +168,10 @@ class GuessMarketEngineImplTest {
                 "single.xml",
                 marketXml(eventXml(1, "Test Event", commission, type, liquidity, "Yes", "No"))));
         return engine;
+    }
+
+    private static double initialSubsidy(int liquidity) {
+        return liquidity * Math.log(2.0);
     }
 
     private String writeXml(String fileName, String content) throws Exception {

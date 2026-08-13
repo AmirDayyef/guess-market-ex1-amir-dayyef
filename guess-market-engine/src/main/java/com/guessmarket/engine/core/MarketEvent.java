@@ -42,9 +42,7 @@ public final class MarketEvent implements Serializable {
         this.commissionType = commissionType;
         this.liquidity = liquidity;
         this.options = optionNames.stream().map(MarketOption::new).toList();
-        // The subsidy C(0,0) is the MM's maximum exposure, not spendable
-        // income. The displayed account therefore starts at zero and tracks
-        // the MM's actual profit/loss as trades and settlement occur.
+        // Appendix A defines C(0,0) as the initial subsidy held by the event account.
         this.accountBalance = Lmsr.cost(0L, 0L, this.liquidity);
     }
 
