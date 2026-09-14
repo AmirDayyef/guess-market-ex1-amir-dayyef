@@ -8,7 +8,8 @@ public final class MarketOption implements Serializable {
     private static final long serialVersionUID = 1L;
 
     private final String name;
-    private long sharesBought;
+    private long sharesIssued;
+    private Double lastTradePrice;
 
     MarketOption(String name) {
         this.name = name;
@@ -18,11 +19,19 @@ public final class MarketOption implements Serializable {
         return name;
     }
 
-    public long getSharesBought() {
-        return sharesBought;
+    public long getSharesIssued() {
+        return sharesIssued;
     }
 
-    void addShares(long quantity) {
-        sharesBought = Math.addExact(sharesBought, quantity);
+    public void addIssuedShares(long quantity) {
+        sharesIssued = Math.addExact(sharesIssued, quantity);
+    }
+
+    public Double getLastTradePrice() {
+        return lastTradePrice;
+    }
+
+    public void setLastTradePrice(double lastTradePrice) {
+        this.lastTradePrice = lastTradePrice;
     }
 }

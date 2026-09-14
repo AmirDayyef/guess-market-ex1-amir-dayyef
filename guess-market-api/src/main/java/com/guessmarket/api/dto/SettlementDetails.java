@@ -6,6 +6,6 @@ public record SettlementDetails(
         double grossPayout,
         double commission,
         double payoutAfterCommission,
+        double returnedToMarketMaker,
         double finalAccountBalance) {
 }
-

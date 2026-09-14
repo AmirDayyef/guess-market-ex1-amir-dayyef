@@ -9,10 +9,12 @@ public record EventSummary(
         int commissionPercentage,
         CommissionType commissionType,
         List<String> optionNames,
-        EventStatus status) {
+        EventStatus status,
+        MarketMethod marketMethod,
+        String marketMakerName,
+        double accountBalance) {
 
     public EventSummary {
         optionNames = List.copyOf(optionNames);
     }
 }
-

@@ -9,12 +9,12 @@
     <version>1.0.0</version>
     <packaging>pom</packaging>
 
-    <name>Guess Market - Exercise 1</name>
+    <name>Guess Market - Exercise 2</name>
 
     <modules>
         <module>guess-market-api</module>
         <module>guess-market-engine</module>
-        <module>guess-market-console</module>
+        <module>guess-market-javafx</module>
     </modules>
 
     <properties>
@@ -22,6 +22,7 @@
         <maven.compiler.release>25</maven.compiler.release>
         <junit.version>5.12.2</junit.version>
         <jaxb.version>4.0.5</jaxb.version>
+        <javafx.version>25.0.4</javafx.version>
     </properties>
 
     <dependencyManagement>
@@ -63,4 +64,3 @@
         </pluginManagement>
     </build>
 </project>
-

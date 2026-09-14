@@ -3,6 +3,8 @@ package com.guessmarket.engine.xml;
 import com.guessmarket.api.dto.CommissionType;
 import com.guessmarket.api.exception.InvalidMarketFileException;
 import com.guessmarket.engine.core.MarketEvent;
+import com.guessmarket.engine.core.MarketState;
+import com.guessmarket.engine.core.MarketUser;
 import jakarta.xml.bind.JAXBContext;
 import jakarta.xml.bind.JAXBException;
 import jakarta.xml.bind.Unmarshaller;
@@ -16,30 +18,32 @@ import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 public final class XmlMarketLoader {
-    public List<MarketEvent> load(String filePath) {
+    public MarketState load(String filePath) {
         Path path = validatePath(filePath);
         XmlMarketFile marketFile = unmarshal(path);
-        return validateAndConvert(marketFile);
+        return validateAndConvert(path, marketFile);
     }
 
     private Path validatePath(String filePath) {
         if (filePath == null || filePath.isBlank()) {
             throw new InvalidMarketFileException("The XML file path cannot be empty.");
         }
-
         final Path path;
         try {
             path = Path.of(filePath.trim());
         } catch (InvalidPathException exception) {
             throw new InvalidMarketFileException("The supplied file path is not valid: " + exception.getReason());
         }
-
         if (!path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".xml")) {
             throw new InvalidMarketFileException("The selected file must have an .xml extension.");
         }
@@ -65,7 +69,7 @@ public final class XmlMarketLoader {
             throw new InvalidMarketFileException("The XML file could not be read: " + exception.getMessage(), exception);
         } catch (JAXBException | XMLStreamException exception) {
             throw new InvalidMarketFileException(
-                    "The XML content could not be parsed. Check that it matches the supplied Exercise 1 schema. Details: "
+                    "The XML content could not be parsed. Check that it matches the supplied Exercise 2 schema. Details: "
                             + usefulMessage(exception), exception);
         }
     }
@@ -79,66 +83,146 @@ public final class XmlMarketLoader {
         try {
             factory.setProperty(property, value);
         } catch (IllegalArgumentException ignored) {
-            // The current XML implementation does not expose this optional property.
+            // Optional property; the validation below does not rely on it.
         }
     }
 
-    private List<MarketEvent> validateAndConvert(XmlMarketFile marketFile) {
+    private MarketState validateAndConvert(Path path, XmlMarketFile marketFile) {
         if (marketFile == null || marketFile.getEvents().isEmpty()) {
             throw new InvalidMarketFileException("The XML file must contain at least one event.");
         }
+        if (marketFile.getUsers().isEmpty()) {
+            throw new InvalidMarketFileException("The XML file must contain at least one user.");
+        }
 
-        Set<Integer> eventIds = new HashSet<>();
-        List<MarketEvent> events = new ArrayList<>();
-        int position = 0;
-        for (XmlMarketFile.XmlEvent xmlEvent : marketFile.getEvents()) {
-            position++;
-            if (xmlEvent.getId() == null) {
-                throw invalidEvent(position, "is missing an ID");
+        Set<Integer> eventIds = new LinkedHashSet<>();
+        for (int index = 0; index < marketFile.getEvents().size(); index++) {
+            XmlMarketFile.XmlEvent event = marketFile.getEvents().get(index);
+            if (event.getId() == null) {
+                throw new InvalidMarketFileException("Event at position " + (index + 1) + " is missing an ID.");
             }
-            int id = xmlEvent.getId();
-            if (!eventIds.add(id)) {
-                throw new InvalidMarketFileException("Event ID " + id + " appears more than once. Event IDs must be unique.");
-            }
-
-            String name = requiredText(xmlEvent.getName(), "name", id);
-            String description = requiredText(xmlEvent.getDescription(), "description", id);
-            if (xmlEvent.getCommission() == null || xmlEvent.getCommission().getPercentage() == null) {
-                throw new InvalidMarketFileException("Event " + id + " is missing its commission definition.");
-            }
-            int commission = xmlEvent.getCommission().getPercentage();
-            if (commission < 0 || commission > 90) {
+            if (!eventIds.add(event.getId())) {
                 throw new InvalidMarketFileException(
-                        "Event " + id + " has commission " + commission + "%. Commission must be between 0% and 90%.");
+                        "Event ID " + event.getId() + " appears more than once. Event IDs must be unique.");
             }
-            CommissionType commissionType = parseCommissionType(xmlEvent.getCommission().getType(), id);
+        }
 
-            List<String> optionNames = xmlEvent.getOptions().stream().map(String::trim).toList();
-            if (optionNames.size() != 2) {
-                throw new InvalidMarketFileException("Event " + id + " must contain exactly two options.");
+        Map<String, XmlMarketFile.XmlUser> usersByName = new LinkedHashMap<>();
+        Map<Integer, String> marketMakerByEvent = new HashMap<>();
+        List<MarketUser> users = new ArrayList<>();
+        for (XmlMarketFile.XmlUser xmlUser : marketFile.getUsers()) {
+            String userName = requiredText(xmlUser.getName(), "A user has an empty name.");
+            String key = userName.toLowerCase(Locale.ROOT);
+            if (usersByName.putIfAbsent(key, xmlUser) != null) {
+                throw new InvalidMarketFileException("User name " + userName + " appears more than once.");
             }
-            if (optionNames.stream().anyMatch(String::isBlank)) {
-                throw new InvalidMarketFileException("Event " + id + " contains an empty option name.");
-            }
-            if (optionNames.get(0).equalsIgnoreCase(optionNames.get(1))) {
-                throw new InvalidMarketFileException("Event " + id + " must contain two different option names.");
+            if (xmlUser.getInitialCash() == null || xmlUser.getInitialCash() <= 0) {
+                throw new InvalidMarketFileException(
+                        "User " + userName + " must have an initial cash balance greater than 0.");
             }
 
-            Integer liquidity = xmlEvent.getLiquidity();
+            Set<Integer> ownedEvents = new HashSet<>();
+            for (Integer eventId : xmlUser.getMarketMakerEventIds()) {
+                if (eventId == null) {
+                    throw new InvalidMarketFileException("User " + userName + " has a Market Maker entry without an ID.");
+                }
+                if (!eventIds.contains(eventId)) {
+                    throw new InvalidMarketFileException(
+                            "User " + userName + " is assigned as Market Maker for event " + eventId
+                                    + ", but that event does not exist.");
+                }
+                if (!ownedEvents.add(eventId)) {
+                    throw new InvalidMarketFileException(
+                            "User " + userName + " lists event " + eventId + " more than once as Market Maker.");
+                }
+                String previous = marketMakerByEvent.putIfAbsent(eventId, userName);
+                if (previous != null) {
+                    throw new InvalidMarketFileException(
+                            "Event " + eventId + " has more than one Market Maker: " + previous + " and " + userName + ".");
+                }
+            }
+            users.add(new MarketUser(userName, xmlUser.getInitialCash(), ownedEvents));
+        }
+
+        for (Integer eventId : eventIds) {
+            if (!marketMakerByEvent.containsKey(eventId)) {
+                throw new InvalidMarketFileException("Event " + eventId + " must have exactly one Market Maker.");
+            }
+        }
+
+        List<MarketEvent> events = new ArrayList<>();
+        for (XmlMarketFile.XmlEvent xmlEvent : marketFile.getEvents()) {
+            events.add(convertEvent(xmlEvent, marketMakerByEvent.get(xmlEvent.getId())));
+        }
+        return new MarketState(path.toAbsolutePath().normalize().toString(), events, users);
+    }
+
+    private MarketEvent convertEvent(XmlMarketFile.XmlEvent xmlEvent, String marketMakerName) {
+        int id = xmlEvent.getId();
+        String name = requiredText(xmlEvent.getName(), "Event " + id + " has an empty name.");
+        String description = requiredText(
+                xmlEvent.getDescription(), "Event " + id + " has an empty description.");
+        if (xmlEvent.getCommission() == null || xmlEvent.getCommission().getPercentage() == null) {
+            throw new InvalidMarketFileException("Event " + id + " is missing its commission definition.");
+        }
+        int commission = xmlEvent.getCommission().getPercentage();
+        if (commission < 0 || commission > 90) {
+            throw new InvalidMarketFileException(
+                    "Event " + id + " has commission " + commission + "%. Commission must be between 0% and 90%.");
+        }
+        CommissionType commissionType = parseCommissionType(xmlEvent.getCommission().getType(), id);
+
+        List<String> options = xmlEvent.getOptions().stream()
+                .map(value -> value == null ? "" : value.trim())
+                .toList();
+        if (options.size() != 2) {
+            throw new InvalidMarketFileException("Event " + id + " must contain exactly two options.");
+        }
+        if (options.stream().anyMatch(String::isBlank)) {
+            throw new InvalidMarketFileException("Event " + id + " contains an empty option name.");
+        }
+        if (options.get(0).equalsIgnoreCase(options.get(1))) {
+            throw new InvalidMarketFileException("Event " + id + " must contain two different option names.");
+        }
+
+        boolean hasLmsr = xmlEvent.getLmsr() != null;
+        boolean hasOrderBook = xmlEvent.getOrderBook() != null;
+        if (hasLmsr == hasOrderBook) {
+            throw new InvalidMarketFileException(
+                    "Event " + id + " must define exactly one trading method: LMSR or Order Book.");
+        }
+        if (hasLmsr) {
+            Integer liquidity = xmlEvent.getLmsr().getLiquidity();
             if (liquidity == null || liquidity <= 0) {
                 throw new InvalidMarketFileException("Event " + id + " must have a positive LMSR liquidity value (b).");
             }
-            events.add(new MarketEvent(
-                    id, name, description, commission, commissionType, liquidity, optionNames));
+            return MarketEvent.lmsr(
+                    id, name, description, commission, commissionType,
+                    liquidity, marketMakerName, options);
         }
-        return List.copyOf(events);
+
+        XmlMarketFile.XmlOrderBook orderBook = xmlEvent.getOrderBook();
+        if (orderBook.getAllowMint() == null) {
+            throw new InvalidMarketFileException("Event " + id + " is missing the allow-mint value.");
+        }
+        if (orderBook.getInitialInvestment() == null || orderBook.getInitialInvestment() < 0) {
+            throw new InvalidMarketFileException(
+                    "Event " + id + " must have an Order Book initial investment of 0 or more.");
+        }
+        if (orderBook.getBaseValue() == null || orderBook.getBaseValue() <= 0) {
+            throw new InvalidMarketFileException("Event " + id + " must have a positive Order Book base value (d).");
+        }
+        return MarketEvent.orderBook(
+                id, name, description, commission, commissionType,
+                orderBook.getAllowMint(), orderBook.getInitialInvestment(), orderBook.getBaseValue(),
+                marketMakerName, options);
     }
 
     private CommissionType parseCommissionType(String value, int eventId) {
         if (value == null) {
             throw new InvalidMarketFileException("Event " + eventId + " is missing its commission type.");
         }
-        return switch (value.trim()) {
+        return switch (value.trim().toLowerCase(Locale.ROOT)) {
             case "on-purchase" -> CommissionType.ON_PURCHASE;
             case "on-close" -> CommissionType.ON_CLOSE;
             default -> throw new InvalidMarketFileException(
@@ -146,15 +230,11 @@ public final class XmlMarketLoader {
         };
     }
 
-    private String requiredText(String value, String field, int eventId) {
+    private String requiredText(String value, String message) {
         if (value == null || value.trim().isEmpty()) {
-            throw new InvalidMarketFileException("Event " + eventId + " has an empty " + field + ".");
+            throw new InvalidMarketFileException(message);
         }
         return value.trim();
-    }
-
-    private InvalidMarketFileException invalidEvent(int position, String problem) {
-        return new InvalidMarketFileException("Event at position " + position + " " + problem + ".");
     }
 
     private String usefulMessage(Exception exception) {

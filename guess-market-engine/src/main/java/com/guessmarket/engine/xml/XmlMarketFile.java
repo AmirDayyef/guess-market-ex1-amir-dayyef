@@ -16,11 +16,18 @@ public final class XmlMarketFile {
     @XmlElement(name = "GM-events", required = true)
     private XmlEvents events;
 
+    @XmlElement(name = "GM-users", required = true)
+    private XmlUsers users;
+
     public XmlMarketFile() {
     }
 
     public List<XmlEvent> getEvents() {
         return events == null ? List.of() : events.events;
+    }
+
+    public List<XmlUser> getUsers() {
+        return users == null ? List.of() : users.users;
     }
 
     @XmlAccessorType(XmlAccessType.FIELD)
@@ -43,7 +50,6 @@ public final class XmlMarketFile {
         @XmlElement(name = "description", required = true)
         private String description;
 
-        // "comision" is intentionally spelled exactly as it is in the supplied XSD.
         @XmlElements({
                 @XmlElement(name = "comision", type = XmlCommission.class),
                 @XmlElement(name = "commission", type = XmlCommission.class)
@@ -59,29 +65,13 @@ public final class XmlMarketFile {
         public XmlEvent() {
         }
 
-        public String getName() {
-            return name;
-        }
-
-        public Integer getId() {
-            return id;
-        }
-
-        public String getDescription() {
-            return description;
-        }
-
-        public XmlCommission getCommission() {
-            return commission;
-        }
-
-        public List<String> getOptions() {
-            return options == null ? List.of() : options.options;
-        }
-
-        public Integer getLiquidity() {
-            return method == null || method.lmsr == null ? null : method.lmsr.liquidity;
-        }
+        public String getName() { return name; }
+        public Integer getId() { return id; }
+        public String getDescription() { return description; }
+        public XmlCommission getCommission() { return commission; }
+        public List<String> getOptions() { return options == null ? List.of() : options.options; }
+        public XmlLmsr getLmsr() { return method == null ? null : method.lmsr; }
+        public XmlOrderBook getOrderBook() { return method == null ? null : method.orderBook; }
     }
 
     @XmlAccessorType(XmlAccessType.FIELD)
@@ -95,13 +85,8 @@ public final class XmlMarketFile {
         public XmlCommission() {
         }
 
-        public String getType() {
-            return type;
-        }
-
-        public Integer getPercentage() {
-            return percentage;
-        }
+        public String getType() { return type; }
+        public Integer getPercentage() { return percentage; }
     }
 
     @XmlAccessorType(XmlAccessType.FIELD)
@@ -115,8 +100,11 @@ public final class XmlMarketFile {
 
     @XmlAccessorType(XmlAccessType.FIELD)
     public static final class XmlMethod {
-        @XmlElement(name = "GM-LMSR", required = true)
+        @XmlElement(name = "GM-LMSR")
         private XmlLmsr lmsr;
+
+        @XmlElement(name = "GM-order-book")
+        private XmlOrderBook orderBook;
 
         public XmlMethod() {
         }
@@ -129,5 +117,79 @@ public final class XmlMarketFile {
 
         public XmlLmsr() {
         }
+
+        public Integer getLiquidity() { return liquidity; }
+    }
+
+    @XmlAccessorType(XmlAccessType.FIELD)
+    public static final class XmlOrderBook {
+        @XmlAttribute(name = "allow-mint", required = true)
+        private Boolean allowMint;
+
+        @XmlAttribute(name = "initial", required = true)
+        private Integer initialInvestment;
+
+        @XmlAttribute(name = "d", required = true)
+        private Integer baseValue;
+
+        public XmlOrderBook() {
+        }
+
+        public Boolean getAllowMint() { return allowMint; }
+        public Integer getInitialInvestment() { return initialInvestment; }
+        public Integer getBaseValue() { return baseValue; }
+    }
+
+    @XmlAccessorType(XmlAccessType.FIELD)
+    public static final class XmlUsers {
+        @XmlElement(name = "GM-user", required = true)
+        private List<XmlUser> users = new ArrayList<>();
+
+        public XmlUsers() {
+        }
+    }
+
+    @XmlAccessorType(XmlAccessType.FIELD)
+    public static final class XmlUser {
+        @XmlAttribute(name = "name", required = true)
+        private String name;
+
+        @XmlElement(name = "initial-cash", required = true)
+        private Integer initialCash;
+
+        @XmlElement(name = "GM-market-maker")
+        private XmlMarketMaker marketMaker;
+
+        public XmlUser() {
+        }
+
+        public String getName() { return name; }
+        public Integer getInitialCash() { return initialCash; }
+        public List<Integer> getMarketMakerEventIds() {
+            if (marketMaker == null) {
+                return List.of();
+            }
+            return marketMaker.events.stream().map(XmlEventReference::getId).toList();
+        }
+    }
+
+    @XmlAccessorType(XmlAccessType.FIELD)
+    public static final class XmlMarketMaker {
+        @XmlElement(name = "event", required = true)
+        private List<XmlEventReference> events = new ArrayList<>();
+
+        public XmlMarketMaker() {
+        }
+    }
+
+    @XmlAccessorType(XmlAccessType.FIELD)
+    public static final class XmlEventReference {
+        @XmlAttribute(name = "id", required = true)
+        private Integer id;
+
+        public XmlEventReference() {
+        }
+
+        public Integer getId() { return id; }
     }
 }

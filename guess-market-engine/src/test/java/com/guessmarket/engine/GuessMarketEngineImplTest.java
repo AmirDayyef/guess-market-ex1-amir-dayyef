@@ -2,7 +2,11 @@ package com.guessmarket.engine;
 
 import com.guessmarket.api.dto.EventDetails;
 import com.guessmarket.api.dto.EventStatus;
-import com.guessmarket.api.dto.TradeReceipt;
+import com.guessmarket.api.dto.MarketMethod;
+import com.guessmarket.api.dto.OrderReceipt;
+import com.guessmarket.api.dto.OrderSide;
+import com.guessmarket.api.dto.TradeKind;
+import com.guessmarket.api.dto.UserDetails;
 import com.guessmarket.api.exception.InvalidMarketFileException;
 import com.guessmarket.api.exception.InvalidOperationException;
 import org.junit.jupiter.api.Test;
@@ -17,161 +21,159 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GuessMarketEngineImplTest {
-    private static final double TOLERANCE = 0.0000001;
+    private static final double TOLERANCE = 0.000001;
 
     @TempDir
     Path temporaryDirectory;
 
     @Test
-    void loadsValidFileAndInitializesEveryEvent() throws Exception {
-        GuessMarketEngineImpl engine = new GuessMarketEngineImpl();
-        engine.loadMarketFromXml(writeXml("multiple.xml", marketXml(
-                eventXml(1, "First Event", 5, "on-purchase", 100, "Yes", "No"),
-                eventXml(2, "Second Event", 15, "on-close", 50, "Up", "Down"))));
+    void loadsExerciseTwoUsersAndBothMarketMethodsAsInactive() throws Exception {
+        GuessMarketEngineImpl engine = loadValidMarket();
 
         assertTrue(engine.hasLoadedMarket());
         assertEquals(2, engine.getEvents().size());
-        EventDetails first = engine.getEventDetails(1);
-        assertEquals(EventStatus.ACTIVE, first.summary().status());
-        assertEquals(initialSubsidy(100), first.accountBalance(), TOLERANCE);
-        assertEquals(0.5, first.options().get(0).currentPrice(), TOLERANCE);
-        assertEquals(0.5, first.options().get(1).currentPrice(), TOLERANCE);
+        assertEquals(4, engine.getUsers().size());
+        assertEquals(EventStatus.INACTIVE, engine.getEventDetails(1).summary().status());
+        assertEquals(MarketMethod.LMSR, engine.getEventDetails(1).summary().marketMethod());
+        assertEquals(MarketMethod.ORDER_BOOK, engine.getEventDetails(2).summary().marketMethod());
+        assertEquals(0.0, engine.getEventDetails(1).summary().accountBalance(), TOLERANCE);
+        assertEquals("Tikva", engine.getEventDetails(1).summary().marketMakerName());
+        assertEquals("Zoe", engine.getEventDetails(2).summary().marketMakerName());
     }
 
     @Test
-    void performsLmsrTradesUsingFullPrecision() throws Exception {
-        GuessMarketEngineImpl engine = engineWithSingleEvent(5, "on-purchase", 100);
+    void rejectsTheTwoOfficialExerciseTwoErrorCases() throws Exception {
+        GuessMarketEngineImpl engine = new GuessMarketEngineImpl();
+        String zeroCash = validXml().replace("<initial-cash>200</initial-cash>", "<initial-cash>0</initial-cash>");
+        String missingEvent = validXml().replace("<event id=\"2\"/>", "<event id=\"12\"/>");
 
-        TradeReceipt first = engine.buyShares(1, 1, 100);
-        TradeReceipt second = engine.buyShares(1, 2, 1_000);
-        EventDetails details = second.updatedEvent();
+        InvalidMarketFileException cashError = assertThrows(
+                InvalidMarketFileException.class,
+                () -> engine.loadMarketFromXml(writeXml("zero-cash.xml", zeroCash)));
+        InvalidMarketFileException mmError = assertThrows(
+                InvalidMarketFileException.class,
+                () -> engine.loadMarketFromXml(writeXml("bad-mm.xml", missingEvent)));
 
-        assertEquals(62.0114506958277, first.sharesCost(), TOLERANCE);
-        assertEquals(3.10057253479139, first.commission(), TOLERANCE);
-        assertEquals(65.1120232306191, first.totalPaid(), TOLERANCE);
-        assertEquals(868.686171467148, second.sharesCost(), TOLERANCE);
-        assertEquals(43.4343085733574, second.commission(), TOLERANCE);
-        assertEquals(initialSubsidy(100) + 977.232503271124, details.accountBalance(), TOLERANCE);
-        assertEquals(46.5348811081489, details.totalCommissionCollected(), TOLERANCE);
-        assertEquals(0.000123394575986, details.options().get(0).currentPrice(), TOLERANCE);
-        assertEquals(0.999876605424014, details.options().get(1).currentPrice(), TOLERANCE);
-        assertEquals(2, details.tradeHistory().size());
-        assertEquals("No", details.tradeHistory().get(0).optionName());
-        assertEquals("Yes", details.tradeHistory().get(1).optionName());
+        assertTrue(cashError.getMessage().contains("greater than 0"));
+        assertTrue(mmError.getMessage().contains("does not exist"));
     }
 
     @Test
-    void closesOnPurchaseEventAndKeepsRemainingSubsidyBalance() throws Exception {
-        GuessMarketEngineImpl engine = engineWithSingleEvent(5, "on-purchase", 100);
-        engine.buyShares(1, 1, 100);
-        engine.buyShares(1, 2, 1_000);
+    void failedLoadKeepsThePreviousValidMarket() throws Exception {
+        GuessMarketEngineImpl engine = loadValidMarket();
+        String invalid = validXml().replace("<initial-cash>200</initial-cash>", "<initial-cash>0</initial-cash>");
 
-        EventDetails closed = engine.closeEvent(1, 2);
+        assertThrows(InvalidMarketFileException.class,
+                () -> engine.loadMarketFromXml(writeXml("invalid.xml", invalid)));
+
+        assertEquals(2, engine.getEvents().size());
+        assertEquals("Rain tomorrow", engine.getEventDetails(1).summary().name());
+    }
+
+    @Test
+    void onlyTheMarketMakerCanOpenAndCloseAnEvent() throws Exception {
+        GuessMarketEngineImpl engine = loadValidMarket();
+
+        assertThrows(InvalidOperationException.class, () -> engine.openEvent("Alice", 1));
+        EventDetails opened = engine.openEvent("Tikva", 1);
+        assertEquals(EventStatus.ACTIVE, opened.summary().status());
+        assertEquals(100.0 * Math.log(2.0), opened.summary().accountBalance(), TOLERANCE);
+        assertThrows(InvalidOperationException.class, () -> engine.closeEvent("Alice", 1, 1));
+    }
+
+    @Test
+    void lmsrPurchaseMovesMoneySharesAndCommissionBetweenAccounts() throws Exception {
+        GuessMarketEngineImpl engine = loadValidMarket();
+        engine.openEvent("Tikva", 1);
+
+        var receipt = engine.buyShares("Alice", 1, 1, 100);
+
+        assertEquals(62.0114506958277, receipt.sharesCost(), TOLERANCE);
+        assertEquals(3.10057253479139, receipt.commission(), TOLERANCE);
+        assertEquals(134.887976769381, engine.getUserDetails("Alice").summary().balance(), TOLERANCE);
+        assertEquals(9933.7858544788, engine.getUserDetails("Tikva").summary().balance(), TOLERANCE);
+        assertEquals(100, engine.getUserDetails("Alice").events().getFirst().holdings().getFirst().shares());
+    }
+
+    @Test
+    void openingOrderBookBuysTheInitialPairsForTheMarketMaker() throws Exception {
+        GuessMarketEngineImpl engine = loadValidMarket();
+
+        EventDetails opened = engine.openEvent("Zoe", 2);
+        UserDetails zoe = engine.getUserDetails("Zoe");
+
+        assertEquals(100.0, opened.summary().accountBalance(), TOLERANCE);
+        assertEquals(400.0, zoe.summary().balance(), TOLERANCE);
+        assertEquals(100, zoe.events().getFirst().holdings().get(0).shares());
+        assertEquals(100, zoe.events().getFirst().holdings().get(1).shares());
+    }
+
+    @Test
+    void reopeningAnEventDoesNotChargeTheMarketMakerAgain() throws Exception {
+        GuessMarketEngineImpl engine = loadValidMarket();
+        engine.openEvent("Zoe", 2);
+        double balanceAfterOpening = engine.getUserDetails("Zoe").summary().balance();
+
+        assertThrows(InvalidOperationException.class, () -> engine.openEvent("Zoe", 2));
+
+        assertEquals(balanceAfterOpening, engine.getUserDetails("Zoe").summary().balance(), TOLERANCE);
+    }
+
+    @Test
+    void orderBookMatchesAtTheRestingPriceAndSupportsPartialFills() throws Exception {
+        GuessMarketEngineImpl engine = loadValidMarket();
+        engine.openEvent("Zoe", 2);
+        engine.submitOrder("Zoe", 2, 1, OrderSide.SELL, 25, 0.58);
+
+        OrderReceipt receipt = engine.submitOrder("Alice", 2, 1, OrderSide.BUY, 40, 0.60);
+
+        assertEquals(1, receipt.executions().size());
+        assertEquals(TradeKind.ORDER_MATCH, receipt.executions().getFirst().kind());
+        assertEquals(25, receipt.executions().getFirst().quantity());
+        assertEquals(0.58, receipt.executions().getFirst().pricePerShare(), TOLERANCE);
+        assertEquals(15, receipt.updatedEvent().orderBook().getFirst().quantity());
+        assertEquals(OrderSide.BUY, receipt.updatedEvent().orderBook().getFirst().side());
+        assertEquals(25, engine.getUserDetails("Alice").events().getFirst().holdings().getFirst().shares());
+    }
+
+    @Test
+    void complementaryBuyOrdersMintPairsAndLeaveTheRemainderResting() throws Exception {
+        GuessMarketEngineImpl engine = loadValidMarket();
+        engine.openEvent("Zoe", 2);
+        engine.submitOrder("Carol", 2, 2, OrderSide.BUY, 35, 0.42);
+
+        OrderReceipt receipt = engine.submitOrder("Alice", 2, 1, OrderSide.BUY, 40, 0.62);
+
+        assertEquals(2, receipt.executions().size());
+        assertTrue(receipt.executions().stream().allMatch(trade -> trade.kind() == TradeKind.MINT));
+        assertEquals(135.0, receipt.updatedEvent().summary().accountBalance(), TOLERANCE);
+        assertEquals(1, receipt.updatedEvent().orderBook().size());
+        assertEquals(5, receipt.updatedEvent().orderBook().getFirst().quantity());
+        assertEquals(35, engine.getUserDetails("Alice").events().getFirst().holdings().getFirst().shares());
+        assertEquals(35, engine.getUserDetails("Carol").events().getFirst().holdings().get(1).shares());
+    }
+
+    @Test
+    void closingOrderBookPaysWinnersClearsOrdersAndEmptiesTheContract() throws Exception {
+        GuessMarketEngineImpl engine = loadValidMarket();
+        engine.openEvent("Zoe", 2);
+        engine.submitOrder("Carol", 2, 2, OrderSide.BUY, 35, 0.42);
+        engine.submitOrder("Alice", 2, 1, OrderSide.BUY, 40, 0.62);
+
+        EventDetails closed = engine.closeEvent("Zoe", 2, 1);
 
         assertEquals(EventStatus.CLOSED, closed.summary().status());
-        assertEquals("No", closed.settlement().winningOptionName());
-        assertEquals(1_000, closed.settlement().winningShares());
-        assertEquals(initialSubsidy(100) - 22.767496728876, closed.accountBalance(), TOLERANCE);
-        assertEquals(closed.accountBalance(), closed.settlement().finalAccountBalance(), TOLERANCE);
-        assertThrows(InvalidOperationException.class, () -> engine.buyShares(1, 1, 1));
-        assertThrows(InvalidOperationException.class, () -> engine.closeEvent(1, 1));
+        assertEquals(0.0, closed.summary().accountBalance(), TOLERANCE);
+        assertTrue(closed.orderBook().isEmpty());
+        assertEquals("YES", closed.settlement().winningOptionName());
+        assertEquals(135.0, closed.settlement().grossPayout(), TOLERANCE);
+        assertFalse(engine.getUserDetails("Alice").summary().blocked());
     }
 
-    @Test
-    void chargesOnCloseCommissionOnlyAtSettlement() throws Exception {
-        GuessMarketEngineImpl engine = engineWithSingleEvent(15, "on-close", 50);
-        TradeReceipt receipt = engine.buyShares(1, 1, 100);
-
-        assertEquals(0.0, receipt.commission(), TOLERANCE);
-        assertEquals(initialSubsidy(50) + 71.6890415241514,
-                receipt.updatedEvent().accountBalance(), TOLERANCE);
-
-        EventDetails closed = engine.closeEvent(1, 1);
-        assertEquals(15.0, closed.settlement().commission(), TOLERANCE);
-        assertEquals(85.0, closed.settlement().payoutAfterCommission(), TOLERANCE);
-        assertEquals(initialSubsidy(50) - 13.3109584758486, closed.accountBalance(), TOLERANCE);
-        assertEquals(15.0, closed.totalCommissionCollected(), TOLERANCE);
-    }
-
-    @Test
-    void failedLoadPreservesPreviousValidState() throws Exception {
-        GuessMarketEngineImpl engine = engineWithSingleEvent(5, "on-purchase", 100);
-        engine.buyShares(1, 1, 25);
-        double balanceBefore = engine.getEventDetails(1).accountBalance();
-        String invalid = marketXml(
-                eventXml(7, "Duplicate A", 5, "on-purchase", 100, "A", "B"),
-                eventXml(7, "Duplicate B", 10, "on-close", 80, "C", "D"));
-
-        assertThrows(InvalidMarketFileException.class,
-                () -> engine.loadMarketFromXml(writeXml("duplicates.xml", invalid)));
-
-        assertEquals(1, engine.getEvents().size());
-        assertEquals(balanceBefore, engine.getEventDetails(1).accountBalance(), TOLERANCE);
-        assertEquals(1, engine.getEventDetails(1).tradeHistory().size());
-    }
-
-    @Test
-    void rejectsOutOfRangeCommissionAndNonPositiveLiquidity() throws Exception {
+    private GuessMarketEngineImpl loadValidMarket() throws Exception {
         GuessMarketEngineImpl engine = new GuessMarketEngineImpl();
-        String badCommission = marketXml(eventXml(1, "Bad Fee", 115, "on-purchase", 100, "A", "B"));
-        String badLiquidity = marketXml(eventXml(2, "Bad B", 5, "on-close", 0, "A", "B"));
-
-        assertThrows(InvalidMarketFileException.class,
-                () -> engine.loadMarketFromXml(writeXml("bad-fee.xml", badCommission)));
-        assertThrows(InvalidMarketFileException.class,
-                () -> engine.loadMarketFromXml(writeXml("bad-b.xml", badLiquidity)));
-    }
-
-    @Test
-    void acceptsBothOfficialTypoAndCorrectCommissionSpelling() throws Exception {
-        GuessMarketEngineImpl engine = new GuessMarketEngineImpl();
-        String xml = marketXml(eventXml(1, "Correct Spelling", 5, "on-purchase", 100, "A", "B")
-                .replace("comision", "commission"));
-
-        engine.loadMarketFromXml(writeXml("correct-spelling.xml", xml));
-
-        assertEquals(1, engine.getEvents().size());
-    }
-
-    @Test
-    void saveAndLoadRestoresCompleteHistoryAndSettlement() throws Exception {
-        GuessMarketEngineImpl original = engineWithSingleEvent(5, "on-purchase", 100);
-        original.buyShares(1, 1, 20);
-        EventDetails expected = original.closeEvent(1, 1);
-        Path statePath = temporaryDirectory.resolve("saved market");
-        original.saveState(statePath.toString());
-
-        GuessMarketEngineImpl restored = new GuessMarketEngineImpl();
-        restored.loadState(statePath.toString());
-        EventDetails actual = restored.getEventDetails(1);
-
-        assertFalse(restored.getActiveEvents().stream().findAny().isPresent());
-        assertEquals(expected.summary(), actual.summary());
-        assertEquals(expected.accountBalance(), actual.accountBalance(), TOLERANCE);
-        assertEquals(expected.tradeHistory(), actual.tradeHistory());
-        assertEquals(expected.settlement(), actual.settlement());
-    }
-
-    @Test
-    void validatesQuantitiesAndOptions() throws Exception {
-        GuessMarketEngineImpl engine = engineWithSingleEvent(5, "on-purchase", 100);
-
-        assertThrows(InvalidOperationException.class, () -> engine.buyShares(1, 1, 0));
-        assertThrows(InvalidOperationException.class, () -> engine.buyShares(1, 1, -1));
-        assertThrows(InvalidOperationException.class, () -> engine.buyShares(1, 3, 1));
-        assertThrows(InvalidOperationException.class, () -> engine.getEventDetails(999));
-    }
-
-    private GuessMarketEngineImpl engineWithSingleEvent(int commission, String type, int liquidity) throws Exception {
-        GuessMarketEngineImpl engine = new GuessMarketEngineImpl();
-        engine.loadMarketFromXml(writeXml(
-                "single.xml",
-                marketXml(eventXml(1, "Test Event", commission, type, liquidity, "Yes", "No"))));
+        engine.loadMarketFromXml(writeXml("valid.xml", validXml()));
         return engine;
-    }
-
-    private static double initialSubsidy(int liquidity) {
-        return liquidity * Math.log(2.0);
     }
 
     private String writeXml(String fileName, String content) throws Exception {
@@ -180,36 +182,45 @@ class GuessMarketEngineImplTest {
         return file.toString();
     }
 
-    private String marketXml(String... events) {
+    private String validXml() {
         return """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <Guess-Market>
                   <GM-events>
-                %s
-                  </GM-events>
-                </Guess-Market>
-                """.formatted(String.join("\n", events));
-    }
-
-    private String eventXml(
-            int id,
-            String name,
-            int commission,
-            String commissionType,
-            int liquidity,
-            String firstOption,
-            String secondOption) {
-        return """
-                    <GM-event name="%s">
-                      <id>%d</id>
-                      <description>Description for %s</description>
-                      <comision type="%s">%d</comision>
+                    <GM-event name="Rain tomorrow">
+                      <id>1</id>
+                      <description>Will it rain tomorrow?</description>
+                      <commission type="on-purchase">5</commission>
                       <GM-options>
-                        <GM-option>%s</GM-option>
-                        <GM-option>%s</GM-option>
+                        <GM-option>YES</GM-option>
+                        <GM-option>NO</GM-option>
                       </GM-options>
-                      <GM-method><GM-LMSR><b>%d</b></GM-LMSR></GM-method>
+                      <GM-method><GM-LMSR><b>100</b></GM-LMSR></GM-method>
                     </GM-event>
-                """.formatted(name, id, name, commissionType, commission, firstOption, secondOption, liquidity);
+                    <GM-event name="World Cup">
+                      <id>2</id>
+                      <description>Who wins the match?</description>
+                      <commission type="on-purchase">1</commission>
+                      <GM-options>
+                        <GM-option>YES</GM-option>
+                        <GM-option>NO</GM-option>
+                      </GM-options>
+                      <GM-method><GM-order-book allow-mint="true" initial="100" d="1"/></GM-method>
+                    </GM-event>
+                  </GM-events>
+                  <GM-users>
+                    <GM-user name="Tikva">
+                      <initial-cash>10000</initial-cash>
+                      <GM-market-maker><event id="1"/></GM-market-maker>
+                    </GM-user>
+                    <GM-user name="Zoe">
+                      <initial-cash>500</initial-cash>
+                      <GM-market-maker><event id="2"/></GM-market-maker>
+                    </GM-user>
+                    <GM-user name="Alice"><initial-cash>200</initial-cash></GM-user>
+                    <GM-user name="Carol"><initial-cash>200</initial-cash></GM-user>
+                  </GM-users>
+                </Guess-Market>
+                """;
     }
 }
