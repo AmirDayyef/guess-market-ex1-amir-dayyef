@@ -8,7 +8,15 @@ import com.guessmarket.engine.core.MarketUser;
 import jakarta.xml.bind.JAXBContext;
 import jakarta.xml.bind.JAXBException;
 import jakarta.xml.bind.Unmarshaller;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+import org.xml.sax.SAXException;
 
+import javax.xml.XMLConstants;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
@@ -28,6 +36,197 @@ import java.util.Map;
 import java.util.Set;
 
 public final class XmlMarketLoader {
+    public List<MarketEvent> loadExercise3(
+            InputStream xml,
+            String marketMakerName,
+            int firstEventId,
+            List<String> existingEventNames) {
+        if (xml == null) {
+            throw new InvalidMarketFileException("No XML content was uploaded.");
+        }
+        Document document;
+        try {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            factory.setXIncludeAware(false);
+            factory.setExpandEntityReferences(false);
+            document = factory.newDocumentBuilder().parse(xml);
+        } catch (ParserConfigurationException | SAXException | IOException exception) {
+            throw new InvalidMarketFileException("The Exercise 3 XML could not be parsed: "
+                    + exception.getMessage(), exception);
+        }
+
+        Element root = document.getDocumentElement();
+        if (root == null || !"Guess-Market".equals(root.getTagName())) {
+            throw new InvalidMarketFileException("The root element must be Guess-Market.");
+        }
+        rejectNonWhitespaceText(root);
+        Element eventContainer = onlyChild(root, "GM-events", "Guess-Market");
+        rejectAttributes(eventContainer);
+        rejectNonWhitespaceText(eventContainer);
+        List<Element> xmlEvents = childElements(eventContainer);
+        if (xmlEvents.isEmpty()) {
+            throw new InvalidMarketFileException("The XML file must contain at least one event.");
+        }
+        List<String> eventNames = new ArrayList<>(existingEventNames);
+        List<MarketEvent> events = new ArrayList<>();
+        for (Element xmlEvent : xmlEvents) {
+            if (!"GM-event".equals(xmlEvent.getTagName())) {
+                throw new InvalidMarketFileException("GM-events may contain only GM-event elements.");
+            }
+            String name = requiredText(xmlEvent.getAttribute("name"), "An event has an empty name.");
+            rejectAttributes(xmlEvent, "name");
+            if (eventNames.stream().anyMatch(existing -> existing.equalsIgnoreCase(name))) {
+                throw new InvalidMarketFileException("Event name " + name + " already exists.");
+            }
+            eventNames.add(name);
+            events.add(convertExercise3Event(xmlEvent, firstEventId + events.size(), marketMakerName, name));
+        }
+        return events;
+    }
+
+    private MarketEvent convertExercise3Event(Element xmlEvent, int id, String maker, String name) {
+        rejectNonWhitespaceText(xmlEvent);
+        List<Element> fields = childElements(xmlEvent);
+        requireSequence(fields, "Event " + name, "description", "commission", "GM-options", "GM-method");
+        rejectAttributes(fields.get(0));
+        requireLeaf(fields.get(0), "Description of event " + name);
+        String description = requiredText(fields.get(0).getTextContent(),
+                "Event " + name + " has an empty description.");
+        Element xmlCommission = fields.get(1);
+        rejectAttributes(xmlCommission, "type");
+        if (!childElements(xmlCommission).isEmpty()) {
+            throw new InvalidMarketFileException("Event " + name + " has an invalid commission element.");
+        }
+        int commission = parseInteger(xmlCommission.getTextContent(), "Commission for event " + name);
+        if (commission < 0 || commission > 90) {
+            throw new InvalidMarketFileException("Event " + name + " commission must be between 0 and 90 percent.");
+        }
+        CommissionType commissionType = parseCommissionType(xmlCommission.getAttribute("type"), id);
+
+        rejectAttributes(fields.get(2));
+        rejectNonWhitespaceText(fields.get(2));
+        List<Element> xmlOptions = childElements(fields.get(2));
+        requireSequence(xmlOptions, "Options for event " + name, "GM-option", "GM-option");
+        xmlOptions.forEach(option -> {
+            rejectAttributes(option);
+            requireLeaf(option, "Option of event " + name);
+        });
+        List<String> options = xmlOptions.stream()
+                .map(option -> requiredText(option.getTextContent(), "Event " + name + " has an empty option."))
+                .toList();
+        if (options.get(0).equalsIgnoreCase(options.get(1))) {
+            throw new InvalidMarketFileException("Event " + name + " must have two different options.");
+        }
+
+        rejectAttributes(fields.get(3));
+        Element method = onlyChild(fields.get(3), null, "GM-method of event " + name);
+        if ("GM-LMSR".equals(method.getTagName())) {
+            rejectAttributes(method);
+            Element b = onlyChild(method, "b", "GM-LMSR of event " + name);
+            rejectAttributes(b);
+            requireLeaf(b, "LMSR liquidity of event " + name);
+            int liquidity = parseInteger(b.getTextContent(), "LMSR liquidity for event " + name);
+            if (liquidity <= 0) {
+                throw new InvalidMarketFileException("Event " + name + " must have positive LMSR liquidity.");
+            }
+            return MarketEvent.lmsr(id, name, description, commission, commissionType,
+                    liquidity, maker, options);
+        }
+        if ("GM-order-book".equals(method.getTagName())) {
+            rejectAttributes(method, "allow-mint", "initial", "d");
+            if (!childElements(method).isEmpty()) {
+                throw new InvalidMarketFileException("Order Book method for event " + name + " has unexpected content.");
+            }
+            String mintValue = method.getAttribute("allow-mint");
+            if (!"true".equals(mintValue) && !"false".equals(mintValue)) {
+                throw new InvalidMarketFileException("Event " + name + " allow-mint must be true or false.");
+            }
+            int initial = parseInteger(method.getAttribute("initial"), "Initial investment for event " + name);
+            int base = parseInteger(method.getAttribute("d"), "Base value for event " + name);
+            if (initial < 0 || base <= 0) {
+                throw new InvalidMarketFileException("Event " + name
+                        + " requires nonnegative initial investment and positive base value.");
+            }
+            return MarketEvent.orderBook(id, name, description, commission, commissionType,
+                    Boolean.parseBoolean(mintValue), initial, base, maker, options);
+        }
+        throw new InvalidMarketFileException("Event " + name + " must specify LMSR or Order Book.");
+    }
+
+    private int parseInteger(String text, String description) {
+        try {
+            return Integer.parseInt(text.trim());
+        } catch (NumberFormatException exception) {
+            throw new InvalidMarketFileException(description + " must be a whole number.");
+        }
+    }
+
+    private Element onlyChild(Element parent, String expectedName, String description) {
+        rejectNonWhitespaceText(parent);
+        List<Element> children = childElements(parent);
+        if (children.size() != 1 || (expectedName != null && !expectedName.equals(children.getFirst().getTagName()))) {
+            throw new InvalidMarketFileException(description + " must contain exactly one "
+                    + (expectedName == null ? "method" : expectedName) + " element.");
+        }
+        return children.getFirst();
+    }
+
+    private void requireSequence(List<Element> children, String description, String... names) {
+        if (children.size() != names.length) {
+            throw new InvalidMarketFileException(description + " has the wrong number of elements.");
+        }
+        for (int index = 0; index < names.length; index++) {
+            if (!names[index].equals(children.get(index).getTagName())) {
+                throw new InvalidMarketFileException(description + " must contain "
+                        + String.join(", ", names) + " in that order.");
+            }
+        }
+    }
+
+    private List<Element> childElements(Element parent) {
+        List<Element> elements = new ArrayList<>();
+        NodeList children = parent.getChildNodes();
+        for (int index = 0; index < children.getLength(); index++) {
+            Node child = children.item(index);
+            if (child instanceof Element element) {
+                elements.add(element);
+            }
+        }
+        return elements;
+    }
+
+    private void requireLeaf(Element element, String description) {
+        if (!childElements(element).isEmpty()) {
+            throw new InvalidMarketFileException(description + " may contain text only.");
+        }
+    }
+
+    private void rejectNonWhitespaceText(Element element) {
+        NodeList children = element.getChildNodes();
+        for (int index = 0; index < children.getLength(); index++) {
+            Node child = children.item(index);
+            if (child.getNodeType() == Node.TEXT_NODE && !child.getTextContent().isBlank()) {
+                throw new InvalidMarketFileException(
+                        "Unexpected text inside " + element.getTagName() + ".");
+            }
+        }
+    }
+
+    private void rejectAttributes(Element element, String... allowed) {
+        var attributes = element.getAttributes();
+        for (int index = 0; index < attributes.getLength(); index++) {
+            String name = attributes.item(index).getNodeName();
+            if (java.util.Arrays.stream(allowed).noneMatch(name::equals)) {
+                throw new InvalidMarketFileException(
+                        "Unexpected attribute " + name + " on " + element.getTagName() + ".");
+            }
+        }
+    }
+
     public MarketState load(String filePath) {
         Path path = validatePath(filePath);
         XmlMarketFile marketFile = unmarshal(path);

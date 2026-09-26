@@ -54,6 +54,10 @@ public final class MarketUser implements Serializable {
         balance += amount;
     }
 
+    public void addMarketMakerEvent(int eventId) {
+        marketMakerEventIds.add(eventId);
+    }
+
     public UserPosition positionFor(int eventId) {
         return positions.computeIfAbsent(eventId, UserPosition::new);
     }

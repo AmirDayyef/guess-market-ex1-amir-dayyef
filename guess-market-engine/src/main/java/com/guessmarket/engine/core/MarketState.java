@@ -44,6 +44,20 @@ public final class MarketState implements Serializable {
         return List.copyOf(users.values());
     }
 
+    public void addUser(MarketUser user) {
+        users.put(user.getName().toLowerCase(Locale.ROOT), user);
+    }
+
+    public void addEvents(List<MarketEvent> newEvents) {
+        for (MarketEvent event : newEvents) {
+            events.put(event.getId(), event);
+        }
+    }
+
+    public int nextEventId() {
+        return events.keySet().stream().mapToInt(Integer::intValue).max().orElse(0) + 1;
+    }
+
     public String getLoadedFilePath() {
         return loadedFilePath;
     }

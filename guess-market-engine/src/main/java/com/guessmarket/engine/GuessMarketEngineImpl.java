@@ -58,6 +58,43 @@ public final class GuessMarketEngineImpl implements GuessMarketEngine {
         this(new XmlMarketLoader());
     }
 
+    public static GuessMarketEngineImpl emptyMarket() {
+        GuessMarketEngineImpl engine = new GuessMarketEngineImpl();
+        engine.state = new MarketState("", List.of(), List.of());
+        return engine;
+    }
+
+    public void registerUser(String name) {
+        if (name == null || name.isBlank()) {
+            throw new InvalidOperationException("Enter a user name.");
+        }
+        String trimmed = name.trim();
+        if (requireState().getUser(trimmed) != null) {
+            throw new InvalidOperationException("User " + trimmed + " already exists.");
+        }
+        requireState().addUser(new MarketUser(trimmed, 0.0, List.of()));
+    }
+
+    public void addExercise3Events(InputStream xml, String marketMakerName) {
+        MarketUser marketMaker = requireUser(marketMakerName);
+        List<MarketEvent> events = xmlLoader.loadExercise3(
+                xml,
+                marketMaker.getName(),
+                requireState().nextEventId(),
+                requireState().getEvents().stream().map(MarketEvent::getName).toList());
+        requireState().addEvents(events);
+        events.forEach(event -> marketMaker.addMarketMakerEvent(event.getId()));
+    }
+
+    public double addFunds(String userName, double amount) {
+        if (!Double.isFinite(amount) || amount <= 0.0) {
+            throw new InvalidOperationException("Funds amount must be a positive number.");
+        }
+        MarketUser user = requireUser(userName);
+        user.credit(amount);
+        return user.getBalance();
+    }
+
     GuessMarketEngineImpl(XmlMarketLoader xmlLoader) {
         this.xmlLoader = xmlLoader;
     }

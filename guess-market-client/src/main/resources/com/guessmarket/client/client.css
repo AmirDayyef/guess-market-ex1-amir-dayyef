@@ -1,0 +1,12 @@
+.root { -fx-font-family: "Segoe UI"; -fx-font-size: 13px; -fx-base: #f4f7fa; }
+.header { -fx-background-color: #15324d; -fx-padding: 12 18; -fx-spacing: 12; }
+.header .label { -fx-text-fill: white; }
+.brand { -fx-font-size: 23px; -fx-font-weight: bold; -fx-text-fill: #216693; }
+.header .brand { -fx-text-fill: white; }
+.primary { -fx-background-color: #2288bb; -fx-text-fill: white; -fx-font-weight: bold; }
+.panel { -fx-background-color: white; -fx-padding: 14; -fx-background-radius: 8; }
+.title { -fx-font-size: 21px; -fx-font-weight: bold; }
+.balance { -fx-font-size: 24px; -fx-font-weight: bold; -fx-text-fill: #146b85; }
+.status { -fx-padding: 10 16; -fx-background-color: #e1eaf0; }
+.table-view { -fx-background-color: white; }
+.scroll-pane { -fx-background-color: transparent; }
