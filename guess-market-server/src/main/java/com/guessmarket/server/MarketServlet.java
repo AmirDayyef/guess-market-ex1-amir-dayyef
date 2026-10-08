@@ -2,6 +2,7 @@ package com.guessmarket.server;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
@@ -15,6 +16,7 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
@@ -106,11 +108,27 @@ public final class MarketServlet extends HttpServlet {
     }
 
     private int integer(JsonObject body, String key) {
-        return body.get(key).getAsInt();
+        try {
+            return numericValue(body, key).intValueExact();
+        } catch (ArithmeticException exception) {
+            throw new IllegalArgumentException(key + " must be a whole number within the integer range.", exception);
+        }
     }
 
     private long whole(JsonObject body, String key) {
-        return body.get(key).getAsLong();
+        try {
+            return numericValue(body, key).longValueExact();
+        } catch (ArithmeticException exception) {
+            throw new IllegalArgumentException(key + " must be a whole number within the long range.", exception);
+        }
+    }
+
+    private BigDecimal numericValue(JsonObject body, String key) {
+        JsonElement value = body.get(key);
+        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) {
+            throw new IllegalArgumentException(key + " must be a number.");
+        }
+        return value.getAsBigDecimal();
     }
 
     private double number(JsonObject body, String key) {

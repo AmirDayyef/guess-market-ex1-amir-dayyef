@@ -48,6 +48,19 @@ final class MarketServletTest {
             assertEquals("Rain", json(snapshot).getAsJsonArray("events")
                     .get(0).getAsJsonObject().get("name").getAsString());
             assertEquals(400, get(http, api.resolve("snapshot"), "").statusCode());
+
+            assertEquals(200, post(http, api.resolve("deposit"), token, "{\"amount\":1000}").statusCode());
+            assertEquals(400, post(http, api.resolve("open"), token, "{\"eventId\":1.5}").statusCode());
+            assertEquals(400, post(http, api.resolve("open"), token, "{\"eventId\":\"1\"}").statusCode());
+            assertEquals(200, post(http, api.resolve("open"), token, "{\"eventId\":1}").statusCode());
+            assertEquals(400, post(http, api.resolve("buy"), token,
+                    "{\"eventId\":1,\"option\":1,\"quantity\":1.5}").statusCode());
+            assertEquals(400, post(http, api.resolve("buy"), token,
+                    "{\"eventId\":1,\"option\":1.5,\"quantity\":1}").statusCode());
+            assertEquals(400, post(http, api.resolve("close"), token,
+                    "{\"eventId\":1,\"winner\":1.5}").statusCode());
+            assertEquals(0, json(get(http, api.resolve("event?id=1"), token))
+                    .getAsJsonArray("tradeHistory").size());
         } finally {
             tomcat.stop();
             tomcat.destroy();
